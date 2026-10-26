@@ -1,0 +1,47 @@
+{
+  "name": "gowords",
+  "version": "0.1.0",
+  "description": "Go words: a registry of resumable workstreams with due dates and not_before times, listed by /gowords:go.",
+  "author": { "name": "Ludovic Bostral" },
+  "license": "MIT",
+  "keywords": ["workstreams", "tasks", "memory", "sessions"],
+  "userConfig": {
+    "timezone": {
+      "type": "string",
+      "title": "Time zone",
+      "description": "IANA time zone for dates and delays, for example Europe/Paris. Empty means the system time zone.",
+      "default": ""
+    },
+    "language": {
+      "type": "string",
+      "title": "Output language",
+      "description": "Language of tables and alerts: en or fr.",
+      "default": "en"
+    },
+    "stale_days": {
+      "type": "number",
+      "title": "Stale after (days)",
+      "description": "An open workstream with no due date is flagged when its file has not changed for this many days.",
+      "default": 14,
+      "min": 1
+    },
+    "memory_dir": {
+      "type": "string",
+      "title": "Workstream directory",
+      "description": "Directory that holds the workstream files. Empty means the automatic memory directory of the current project.",
+      "default": ""
+    },
+    "session_alert": {
+      "type": "string",
+      "title": "Session start alert",
+      "description": "on shows workstreams due within 48 hours when a session starts; off disables the alert.",
+      "default": "on"
+    },
+    "peers": {
+      "type": "string",
+      "title": "Ask neighbouring sessions",
+      "description": "ask lists the running sessions and waits for your yes before messaging them; on messages them without asking; off skips that step.",
+      "default": "ask"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "gowords",
+  "owner": {
+    "name": "Ludovic Bostral"
+  },
+  "plugins": [
+    {
+      "name": "gowords",
+      "source": "./plugins/gowords",
+      "description": "Go words: resumable workstreams with due dates and not_before times."
+    }
+  ],
+  "description": "Marketplace for the gowords plugin."
+}
