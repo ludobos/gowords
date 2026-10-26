@@ -18,7 +18,7 @@ script passes them inline. Use exactly this prefix, called RUN below:
 CLAUDE_PLUGIN_OPTION_TIMEZONE='${user_config.timezone}' CLAUDE_PLUGIN_OPTION_LANGUAGE='${user_config.language}' CLAUDE_PLUGIN_OPTION_STALE_DAYS='${user_config.stale_days}' CLAUDE_PLUGIN_OPTION_MEMORY_DIR='${user_config.memory_dir}' CLAUDE_PLUGIN_OPTION_SESSION_ALERT='${user_config.session_alert}' python3 "${CLAUDE_PLUGIN_ROOT}"/scripts/gowords.py
 ```
 
-Commands: `RUN list`, `RUN find <word>`, `RUN where`.
+Commands: `RUN list`, `RUN list --closed`, `RUN find <word>`, `RUN where`.
 
 Peer step option: `peers` = `${user_config.peers}`. It takes `ask`, `on` or `off`. If it shows as
 an unresolved placeholder, is empty or is any other value, treat it as `ask`. The user can also say
@@ -38,11 +38,12 @@ an unresolved placeholder, is empty or is any other value, treat it as `ask`. Th
    on, which files or resources are you changing, what are you leaving free?" Read the replies, then
    mark in the list the words already taken by a session. A session that does not answer is marked
    "no answer", never counted as free.
-2. Run `RUN list`.
+2. Run `RUN list`. Its closed table is omitted: the output ends the active table with a line that
+   counts the closed workstreams. Run `RUN list --closed` only when the user asks for the closed ones.
 3. Render its tables as they are, without rewriting them into prose, and add a "taken by" column
    from step 1. The source of truth is the frontmatter of each file: `metadata.go_word`, `aliases`,
    `status` (`open`, `waiting`, `closed`, `stopped`; French `ouvert`, `en attente`, `clos`,
-   `arrêté`), `next_due`, `not_before` and `done_when`.
+   `arrêté`), `next_due`, `not_before`, `waiting_on` and `done_when`.
 4. Everything is relative to the current time in the configured time zone. The script prints "Now"
    and, for a due date that is overdue or within 48 hours, the delay from that instant; beyond 48
    hours the delay column is empty, so compute it yourself from the printed date. In the rendered text, never give a bare UTC
@@ -60,8 +61,9 @@ start now, not what is most important.
 
 Write the criteria BEFORE the sorting table:
 
-- (0) launchable now: no `not_before` in the future, and the status is not `stopped` or `closed`.
-  Stopped workstreams are never candidates, although `list` still shows them in the active table. A word whose `not_before` is in the future is
+- (0) launchable now: no `not_before` in the future, no `waiting_on`, and the status is not
+  `stopped` or `closed`. A workstream with `waiting_on` is never launchable now, whatever its
+  `not_before`: it goes in the "later" line with what it waits on. Stopped workstreams are never candidates, although `list` still shows them in the active table. A word whose `not_before` is in the future is
   not among the 3; it goes in a "later" line with its time in the configured zone and its delay.
 - (a) overdue or due within 48 h of now comes first; among due dates on the same day, the action
   that can be done earliest.
@@ -74,7 +76,7 @@ Then:
 1. A sorting table with one row per retained candidate and per rejected candidate among the 5 best,
    one column per criterion (a) (b) (c), and a verdict on every row.
 2. The 3 recommended tasks, each with its first concrete action and its cost if it is paid.
-3. The "later" line for words with a future `not_before`.
+3. The "later" line for words with a future `not_before` or a `waiting_on`.
 4. If fewer than 3 free candidates exist, say so with the exact number instead of padding with
    invented tasks.
 
@@ -110,6 +112,7 @@ metadata:
   status: 'open'                  # open | waiting | closed | stopped
   next_due: 'YYYY-MM-DD'          # or 'YYYY-MM-DD HH:MM', local time; optional
   not_before: 'YYYY-MM-DD HH:MM'  # optional; a bare date means 00:00
+  waiting_on: '<person or event>' # optional; person or event awaited
   done_when: '<end criterion>'
 ---
 ```
@@ -122,6 +125,9 @@ metadata:
 - Set `not_before` as soon as the next action waits for a time or a day (scheduled run, scheduled
   mail, measurement window, dated reminder, "tonight"), in the same format as `next_due`. A bare date
   means 00:00. No waiting means no field.
+- A waiting workstream gets `not_before` when the wait has a date, and `waiting_on` (the person or
+  event, in a few words) when it waits for a person or an event without a date. Clear `waiting_on`
+  once the wait is over.
 - Always put `next_due` in single quotes (otherwise YAML turns it into a date), as `YYYY-MM-DD`
   (due during that day) or `YYYY-MM-DD HH:MM` in local time when the action depends on a time. No
   due date means no field.

@@ -195,11 +195,13 @@ LABELS = {
         "now": "now", "not_before": "not before {when} (in {delta})",
         "overdue": "OVERDUE by {delta}", "due": "in {delta}",
         "eod": " (end of day)", "d": "d",
+        "waiting": "waiting on {who}", "and": "; ",
     },
     "fr": {
         "now": "maintenant", "not_before": "pas avant {when} (dans {delta})",
         "overdue": "DÉPASSÉE de {delta}", "due": "dans {delta}",
         "eod": " (fin de journée)", "d": "j",
+        "waiting": "attend : {who}", "and": " ; ",
     },
 }
 
@@ -216,6 +218,8 @@ class Workstream:
     path: str
     age_days: int
     not_before_timed: bool = False
+    waiting_on: str = ""
+    size: int = 0
 
 
 def parse_due(value, tz, day_time=time(23, 59)):
@@ -247,8 +251,9 @@ def format_delta(td, lang="en"):
 
 def launch_label(w, now, lang="en"):
     labels = LABELS[lang]
+    waiting = labels["waiting"].format(who=w.waiting_on) if w.waiting_on else ""
     if w.not_before is None or w.not_before <= now:
-        return labels["now"]
+        return waiting or labels["now"]
     tz = now.tzinfo
     nb = w.not_before.astimezone(tz)
     if not w.not_before_timed:
@@ -257,7 +262,8 @@ def launch_label(w, now, lang="en"):
         when = nb.strftime("%H:%M")
     else:
         when = nb.strftime("%Y-%m-%d %H:%M")
-    return labels["not_before"].format(when=when, delta=format_delta(_real_delta(w.not_before, now), lang))
+    label = labels["not_before"].format(when=when, delta=format_delta(_real_delta(w.not_before, now), lang))
+    return label + labels["and"] + waiting if waiting else label
 
 
 def due_label(w, now, lang="en"):
@@ -280,11 +286,33 @@ def _aliases(raw):
     return list(raw)
 
 
-def load_workstreams(memory_dir, tz, now):
+PROBLEMS = {
+    "en": {
+        "read": "cannot read file ({reason})",
+        "frontmatter": "unreadable frontmatter ({exc})",
+        "status": "unknown status {raw!r}",
+        "date": "{key} is not a date: {raw!r}",
+        "done_when": "done_when is missing",
+        "dup": "go_word {word!r} is used by several open workstreams ({files})",
+    },
+    "fr": {
+        "read": "fichier illisible ({reason})",
+        "frontmatter": "frontmatter illisible ({exc})",
+        "status": "statut inconnu {raw!r}",
+        "date": "{key} : date illisible {raw!r}",
+        "done_when": "done_when absent",
+        "dup": "mot {word!r} porté par plusieurs fiches ouvertes ({files})",
+    },
+}
+
+
+def load_workstreams(memory_dir, tz, now, lang="en"):
     """Read every workstream card in memory_dir.
 
     Returns (workstreams, problems); each problem line starts with the file name.
+    The fixed text of the problem lines follows lang.
     """
+    pb = PROBLEMS[lang]
     workstreams, problems = [], []
     today = now.astimezone(tz).date()
     for name in sorted(os.listdir(memory_dir)):
@@ -296,7 +324,7 @@ def load_workstreams(memory_dir, tz, now):
                 text = f.read()
         except (OSError, UnicodeDecodeError) as exc:
             reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else type(exc).__name__
-            problems.append(f"{name}: cannot read file ({reason})")
+            problems.append(f"{name}: " + pb["read"].format(reason=reason))
             continue
         text = text.lstrip("\ufeff")
         if not text.startswith("---"):
@@ -304,7 +332,7 @@ def load_workstreams(memory_dir, tz, now):
         try:
             meta = parse_frontmatter(text).get("metadata")
         except FrontmatterError as exc:
-            problems.append(f"{name}: unreadable frontmatter ({exc})")
+            problems.append(f"{name}: " + pb["frontmatter"].format(exc=exc))
             continue
         if not isinstance(meta, dict) or "go_word" not in meta:
             continue
@@ -312,7 +340,7 @@ def load_workstreams(memory_dir, tz, now):
         raw_status = str(meta.get("status", "")).strip()
         status = STATUS_MAP.get(raw_status.lower())
         if status is None:
-            problems.append(f"{name}: unknown status {raw_status!r}")
+            problems.append(f"{name}: " + pb["status"].format(raw=raw_status))
             status = raw_status.lower() or "?"
 
         dates = {}
@@ -322,11 +350,11 @@ def load_workstreams(memory_dir, tz, now):
                 try:
                     dates[key] = parse_due(meta[key], tz, day_time)
                 except ValueError:
-                    problems.append(f"{name}: {key} is not a date: {meta[key]!r}")
+                    problems.append(f"{name}: " + pb["date"].format(key=key, raw=meta[key]))
 
         done_when = str(meta.get("done_when", "")).strip()
         if not done_when:
-            problems.append(f"{name}: done_when is missing")
+            problems.append(f"{name}: " + pb["done_when"])
 
         mtime = datetime.fromtimestamp(os.path.getmtime(path), tz).date()
         workstreams.append(Workstream(
@@ -340,6 +368,8 @@ def load_workstreams(memory_dir, tz, now):
             path=path,
             age_days=(today - mtime).days,
             not_before_timed=dates["not_before"][1],
+            waiting_on=str(meta.get("waiting_on", "")).strip(),
+            size=os.path.getsize(path),
         ))
 
     seen = {}
@@ -349,7 +379,7 @@ def load_workstreams(memory_dir, tz, now):
     for group in seen.values():
         if len(group) > 1:
             files = ", ".join(os.path.basename(w.path) for w in group)
-            problems.append(f"{os.path.basename(group[0].path)}: go_word {group[0].word!r} is used by several open workstreams ({files})")
+            problems.append(f"{os.path.basename(group[0].path)}: " + pb["dup"].format(word=group[0].word, files=files))
     return workstreams, problems
 
 
@@ -460,6 +490,9 @@ TEXT = {
         "closed": "## Closed", "closed_cols": "| Word | Done when |",
         "alias": " (alias: {a})", "stale": "no due date, card unchanged for {n} {u}",
         "problems": "Problems: ",
+        "closed_hidden": "{n} closed — list --closed to show them",
+        "heavy": "Heavy files (> 20 KB): {items}",
+        "long": "Long done_when (> 250 chars): {items}",
         "hint": "No memory directory found at {path}.\nCreate it by starting a workstream with: go new <word>",
         "hook": "Go words due within 48 h (now: {now}, {zone}) — full list: /gowords:go",
         "line": "- {word}: {due}, {delay}; launchable {launch} — {done}",
@@ -473,6 +506,9 @@ TEXT = {
         "closed": "## Clos", "closed_cols": "| Mot | Critère de fin |",
         "alias": " (alias : {a})", "stale": "sans échéance, fiche inchangée depuis {n} {u}",
         "problems": "Problèmes : ",
+        "closed_hidden": "{n} clos — list --closed pour les afficher",
+        "heavy": "Fiches lourdes (> 20 Ko) : {items}",
+        "long": "done_when longs (> 250 car.) : {items}",
         "hint": "Aucun dossier mémoire trouvé à {path}.\nCréez-le en lançant un chantier : go new <mot>",
         "hook": "Mots « go » à échéance ≤ 48 h (maintenant : {now}, {zone}) — liste complète : /gowords:go",
         "line": "- {word} : {due}, {delay} ; lançable {launch} — {done}",
@@ -505,7 +541,38 @@ def render_hint(path, lang="en"):
     return TEXT[lang]["hint"].format(path=path)
 
 
-def render_list(ws, problems, now, lang="en", stale_days=14):
+HEAVY_BYTES = 20000
+LONG_DONE_CHARS = 250
+HOOK_DONE_CHARS = 120
+HOOK_DONE_WORD_FROM = 80
+
+
+def _cut_done(text):
+    """At most HOOK_DONE_CHARS characters, cut on a word boundary when one follows char 80."""
+    if len(text) <= HOOK_DONE_CHARS:
+        return text
+    head = text[:HOOK_DONE_CHARS]
+    space = head.rfind(" ")
+    if space > HOOK_DONE_WORD_FROM:
+        head = head[:space]
+    return head.rstrip() + "…"
+
+
+def hygiene_lines(active, lang="en"):
+    """Up to two lines about heavy cards and long done_when, for non-closed workstreams."""
+    t = TEXT[lang]
+    unit = "KB" if lang == "en" else "Ko"
+    heavy = sorted((w for w in active if w.size > HEAVY_BYTES), key=lambda w: (-w.size, w.word.casefold()))
+    long_ = sorted((w for w in active if len(w.done_when) > LONG_DONE_CHARS), key=lambda w: (-len(w.done_when), w.word.casefold()))
+    out = []
+    if heavy:
+        out.append(t["heavy"].format(items=", ".join(f"{w.word} ({round(w.size / 1000)} {unit})" for w in heavy)))
+    if long_:
+        out.append(t["long"].format(items=", ".join(f"{w.word} ({len(w.done_when)})" for w in long_)))
+    return out
+
+
+def render_list(ws, problems, now, lang="en", stale_days=14, show_closed=False):
     t = TEXT[lang]
     tz = now.tzinfo
     zone = tz_name(tz, now)
@@ -519,10 +586,16 @@ def render_list(ws, problems, now, lang="en", stale_days=14):
             flag = t["stale"].format(n=w.age_days, u=LABELS[lang]["d"])
         status = t["status"].get(w.status, w.status)
         out.append(f"| {w.word}{alias} | {status} | {launch_label(w, now, lang)} | {_fmt_due(w, tz) or '-'} | {flag} | {w.done_when} |")
-    out += ["", t["closed"], "", t["closed_cols"], "|---|---|"]
-    out += [f"| {w.word} | {w.done_when} |" for w in closed]
+    if show_closed:
+        out += ["", t["closed"], "", t["closed_cols"], "|---|---|"]
+        out += [f"| {w.word} | {w.done_when} |" for w in closed]
+    elif closed:
+        out += ["", t["closed_hidden"].format(n=len(closed))]
     if problems:
         out += ["", t["problems"] + "; ".join(problems)]
+    hygiene = hygiene_lines(active, lang)
+    if hygiene:
+        out += [""] + hygiene
     return "\n".join(out)
 
 
@@ -538,7 +611,7 @@ def render_hook(ws, now, lang="en"):
     out = [t["hook"].format(now=now.strftime("%Y-%m-%d %H:%M"), zone=tz_name(tz, now))]
     for w in soon[:5]:
         out.append(t["line"].format(word=w.word, due=_fmt_due(w, tz), delay=due_label(w, now, lang),
-                                    launch=launch_label(w, now, lang), done=w.done_when))
+                                    launch=launch_label(w, now, lang), done=_cut_done(w.done_when)))
     if len(soon) > 5:
         out.append(t["more"].format(n=len(soon) - 5))
     return "\n".join(out)

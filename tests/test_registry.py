@@ -129,6 +129,31 @@ class TestLabels(RegistryCase):
         self.assertEqual(format_delta(-timedelta(minutes=20)), "20 min")
 
 
+class TestWaitingOn(RegistryCase):
+    def test_default_empty(self):
+        w, _ = self.one(card())
+        self.assertEqual(w.waiting_on, "")
+
+    def test_waiting_on_alone_not_launchable(self):
+        w, _ = self.one(card(extra="  waiting_on: 'the reply'"))
+        self.assertEqual(w.waiting_on, "the reply")
+        self.assertEqual(launch_label(w, NOW, "en"), "waiting on the reply")
+        self.assertEqual(launch_label(w, NOW, "fr"), "attend : the reply")
+
+    def test_waiting_on_with_future_not_before(self):
+        w, _ = self.one(card(extra="  waiting_on: 'the reply'\n  not_before: '2026-10-27 12:00'"))
+        self.assertEqual(launch_label(w, NOW, "en"), "not before 2026-10-27 12:00 (in 1 d 1 h); waiting on the reply")
+        self.assertEqual(launch_label(w, NOW, "fr"), "pas avant 2026-10-27 12:00 (dans 1 j 1 h) ; attend : the reply")
+
+    def test_waiting_on_with_past_not_before_still_waiting(self):
+        w, _ = self.one(card(extra="  waiting_on: 'the reply'\n  not_before: '2026-10-20'"))
+        self.assertEqual(launch_label(w, NOW, "en"), "waiting on the reply")
+
+    def test_without_waiting_on_unchanged(self):
+        w, _ = self.one(card(extra="  not_before: '2026-10-20'"))
+        self.assertEqual(launch_label(w, NOW, "en"), "now")
+
+
 class TestLoading(RegistryCase):
     def test_french_statuses_normalized(self):
         for raw, expected in [("en attente", "waiting"), ("clos", "closed"), ("arrêté", "stopped"),

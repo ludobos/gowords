@@ -206,7 +206,7 @@ class CliCase(Base):
         old = os.path.join(self.mem, "none.md")
         ts = (NOW - timedelta(days=20)).timestamp()
         os.utime(old, (ts, ts))
-        code, out, _ = self.run_cli(["list"])
+        code, out, _ = self.run_cli(["list", "--closed"])
         self.assertEqual(code, 0)
         lines = out.split("\n")
         self.assertEqual(lines[0], "Now: 2026-10-26 10:59, Europe/Paris — 3 active, 1 closed")
@@ -232,6 +232,110 @@ class CliCase(Base):
         self.write("b.md", card("go a"))
         code, out, _ = self.run_cli(["list"])
         self.assertIn("several open workstreams", out)
+
+
+class ClosedListCase(Base):
+    def setUp(self):
+        super().setUp()
+        self.write("a.md", card("go a"))
+        self.write("b.md", card("go b", status="closed", done="'shipped'"))
+        self.write("c.md", card("go c", status="closed"))
+
+    def test_closed_hidden_by_default(self):
+        _, out, _ = self.run_cli(["list"])
+        self.assertNotIn("## Closed", out)
+        self.assertNotIn("shipped", out)
+        self.assertIn("2 closed — list --closed to show them", out)
+
+    def test_closed_hidden_french(self):
+        env = {**self.env, "CLAUDE_PLUGIN_OPTION_LANGUAGE": "fr"}
+        _, out, _ = self.run_cli(["list"], env=env)
+        self.assertNotIn("## Clos", out)
+        self.assertIn("2 clos — list --closed pour les afficher", out)
+
+    def test_closed_shown_with_flag(self):
+        _, out, _ = self.run_cli(["list", "--closed"])
+        self.assertIn("## Closed", out)
+        self.assertIn("| go b | shipped |", out)
+        self.assertNotIn("list --closed to show", out)
+
+    def test_no_closed_line_when_none(self):
+        os.remove(os.path.join(self.mem, "b.md"))
+        os.remove(os.path.join(self.mem, "c.md"))
+        _, out, _ = self.run_cli(["list"])
+        self.assertNotIn("closed —", out)
+
+
+class HookCutCase(Base):
+    def test_long_done_when_is_cut(self):
+        self.write("a.md", card("go a", due="2026-10-25", done="'" + "word " * 60 + "'"))
+        _, out, _ = self.run_cli(["hook"], stdin="{}")
+        line = self.hook_text(out).split("\n")[1]
+        crit = line.split(" — ", 1)[1]
+        self.assertLessEqual(len(crit), 121)
+        self.assertTrue(crit.endswith("…"))
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["additionalContext"], self.hook_text(out))
+
+    def test_cut_without_space_after_80_is_hard(self):
+        self.write("a.md", card("go a", due="2026-10-25", done="'" + "x" * 300 + "'"))
+        _, out, _ = self.run_cli(["hook"], stdin="{}")
+        crit = self.hook_text(out).split("\n")[1].split(" — ", 1)[1]
+        self.assertEqual(crit, "x" * 120 + "…")
+
+    def test_short_done_when_unchanged(self):
+        self.write("a.md", card("go a", due="2026-10-25", done="'it ships'"))
+        _, out, _ = self.run_cli(["hook"], stdin="{}")
+        self.assertTrue(self.hook_text(out).split("\n")[1].endswith("— it ships"))
+
+
+class HygieneCase(Base):
+    def test_heavy_and_long_lines_en(self):
+        self.write("a.md", card("go a") .replace("body", "x" * 115000))
+        self.write("b.md", card("go b").replace("body", "x" * 27000))
+        self.write("c.md", card("go c", done="'" + "y" * 369 + "'"))
+        self.write("d.md", card("go d", done="'" + "y" * 297 + "'"))
+        self.write("e.md", card("go e", status="closed", done="'" + "y" * 400 + "'").replace("body", "x" * 90000))
+        _, out, _ = self.run_cli(["list", "--closed"])
+        self.assertIn("Heavy files (> 20 KB): go a (115 KB), go b (27 KB)", out)
+        self.assertIn("Long done_when (> 250 chars): go c (369), go d (297)", out)
+        self.assertNotIn("go e (", out)
+
+    def test_heavy_and_long_lines_fr(self):
+        self.write("a.md", card("go a").replace("body", "x" * 21000))
+        self.write("c.md", card("go c", done="'" + "y" * 251 + "'"))
+        env = {**self.env, "CLAUDE_PLUGIN_OPTION_LANGUAGE": "fr"}
+        _, out, _ = self.run_cli(["list"], env=env)
+        self.assertIn("Fiches lourdes (> 20 Ko) : go a (21 Ko)", out)
+        self.assertIn("done_when longs (> 250 car.) : go c (251)", out)
+
+    def test_no_line_below_thresholds(self):
+        self.write("a.md", card("go a", done="'" + "y" * 250 + "'"))
+        _, out, _ = self.run_cli(["list"])
+        self.assertNotIn("Heavy", out)
+        self.assertNotIn("Long done_when", out)
+
+    def test_not_in_hook(self):
+        self.write("a.md", card("go a", due="2026-10-25").replace("body", "x" * 30000))
+        _, out, _ = self.run_cli(["hook"], stdin="{}")
+        self.assertNotIn("Heavy", out)
+
+    def test_french_problem_lines(self):
+        self.write("bad.md", "---\nmetadata:\n  go_word: 'go x'\n  status: weird\n  next_due: 'nope'\n---\n")
+        self.write("worse.md", "---\nmetadata:\n  go_word: 'go y'\n  aliases:\n    - x\n---\n")
+        self.write("d1.md", card("go d"))
+        self.write("d2.md", card("go d"))
+        env = {**self.env, "CLAUDE_PLUGIN_OPTION_LANGUAGE": "fr"}
+        _, out, _ = self.run_cli(["list"], env=env)
+        for frag in ("bad.md: statut inconnu", "bad.md: next_due : date illisible", "bad.md: done_when absent",
+                     "worse.md: frontmatter illisible", "d1.md: mot 'go d' porté par plusieurs fiches"):
+            self.assertIn(frag, out)
+        self.assertNotIn("is missing", out)
+
+    def test_english_problem_lines_unchanged(self):
+        self.write("bad.md", "---\nmetadata:\n  go_word: 'go x'\n  status: weird\n---\n")
+        _, out, _ = self.run_cli(["list"])
+        self.assertIn("bad.md: unknown status 'weird'", out)
+        self.assertIn("bad.md: done_when is missing", out)
 
 
 class RenderCase(unittest.TestCase):

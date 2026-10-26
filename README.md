@@ -45,13 +45,16 @@ metadata:
   status: 'open'                  # open | waiting | closed | stopped
   next_due: 'YYYY-MM-DD'          # or 'YYYY-MM-DD HH:MM', local time; optional
   not_before: 'YYYY-MM-DD HH:MM'  # optional; a bare date means 00:00
+  waiting_on: '<person or event>' # optional; person or event awaited
   done_when: '<end criterion>'
 ---
 
 One paragraph that states the goal and the next action.
 ```
 
-The script also accepts the French statuses `ouvert`, `en attente`, `clos` and `arrêté`, whatever the output language. It reads a small subset of YAML: bare or quoted scalars on one line, and inline lists `[...]`. A file it cannot read is reported as a problem in the listing instead of being skipped. It also reports an unreadable date, a word claimed by two files, a missing `done_when`, and an open workstream with no due date whose file has not changed for `stale_days` days (14 by default).
+The script also accepts the French statuses `ouvert`, `en attente`, `clos` and `arrêté`, whatever the output language. It reads a small subset of YAML: bare or quoted scalars on one line, and inline lists `[...]`. A file it cannot read is reported as a problem in the listing instead of being skipped. It also reports an unreadable date, a word claimed by two files, a missing `done_when`, and an open workstream with no due date whose file has not changed for `stale_days` days (14 by default). Two more lines flag cards that have grown: files over 20 KB and `done_when` over 250 characters, for workstreams that are not closed.
+
+`waiting_on` names the person or event a workstream waits for, when no date is known. A workstream with `waiting_on` is never launchable, whatever `not_before` says, and the listing shows what it waits on. `list` hides closed workstreams and prints their count; `list --closed` prints the closed table. The session-start alert cuts each `done_when` to 120 characters.
 
 A workstream is closed by setting `status: 'closed'`. Its file stays.
 
@@ -76,7 +79,7 @@ None of these waits on code. Most of them wait on a person or on a date.
 
 beads lists work with no open blockers through `bd ready`, and taskmd recommends tasks through `taskmd next`. Both work from dependencies between tasks. gowords does three other things:
 
-- `not_before`: a workstream whose next action waits for a time leaves the "launch now" list until that time.
+- `not_before` and `waiting_on`: a workstream whose next action waits for a time, or for a person or event, leaves the "launch now" list until then.
 - Waits outside code: an email reply, a scheduled run, a document published on a given date.
 - Peer sessions: before recommending, the skill asks the other running Claude Code sessions which workstream they hold, and marks those words as taken.
 
