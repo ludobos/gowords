@@ -496,6 +496,7 @@ TEXT = {
         "hint": "No memory directory found at {path}.\nCreate it by starting a workstream with: go new <word>",
         "hook": "Go words due within 48 h (now: {now}, {zone}) — full list: /gowords:go",
         "line": "- {word}: {due}, {delay}; launchable {launch} — {done}",
+        "line_waiting": "- {word}: {due}, {delay}; not launchable, {launch} — {done}",
         "more": "- … {n} more: /gowords:go",
         "status": {"open": "open", "waiting": "waiting", "closed": "closed", "stopped": "stopped"},
     },
@@ -512,6 +513,7 @@ TEXT = {
         "hint": "Aucun dossier mémoire trouvé à {path}.\nCréez-le en lançant un chantier : go new <mot>",
         "hook": "Mots « go » à échéance ≤ 48 h (maintenant : {now}, {zone}) — liste complète : /gowords:go",
         "line": "- {word} : {due}, {delay} ; lançable {launch} — {done}",
+        "line_waiting": "- {word} : {due}, {delay} ; non lançable, {launch} — {done}",
         "more": "- … {n} de plus : /gowords:go",
         "status": {"open": "ouvert", "waiting": "en attente", "closed": "clos", "stopped": "arrêté"},
     },
@@ -610,7 +612,7 @@ def render_hook(ws, now, lang="en"):
         return ""
     out = [t["hook"].format(now=now.strftime("%Y-%m-%d %H:%M"), zone=tz_name(tz, now))]
     for w in soon[:5]:
-        out.append(t["line"].format(word=w.word, due=_fmt_due(w, tz), delay=due_label(w, now, lang),
+        out.append(t["line_waiting" if w.waiting_on else "line"].format(word=w.word, due=_fmt_due(w, tz), delay=due_label(w, now, lang),
                                     launch=launch_label(w, now, lang), done=_cut_done(w.done_when)))
     if len(soon) > 5:
         out.append(t["more"].format(n=len(soon) - 5))

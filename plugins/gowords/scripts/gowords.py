@@ -76,7 +76,7 @@ def main(argv, env=None, now=None, cwd=None):
         if not mem:
             print(f"no memory directory at {wanted}", file=sys.stderr)
             return 1
-        ws, _ = load_workstreams(mem, tz, now)
+        ws, _ = load_workstreams(mem, tz, now, lang)
         target = _normalize(argv[1])
         hits = [w for w in ws if target in _names(w)]
         if not hits:

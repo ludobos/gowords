@@ -288,6 +288,48 @@ class HookCutCase(Base):
         self.assertTrue(self.hook_text(out).split("\n")[1].endswith("— it ships"))
 
 
+def waiting_card(word, extra, status="open", due=None):
+    return card(word, status=status, due=due).replace("  done_when:", extra + "\n  done_when:")
+
+
+class WaitingHookCase(Base):
+    def test_hook_waiting_en(self):
+        self.write("a.md", waiting_card("go a", "  waiting_on: 'Bob'", due="2026-10-25"))
+        _, out, _ = self.run_cli(["hook"], stdin="{}")
+        line = self.hook_text(out).split("\n")[1]
+        self.assertIn("not launchable, waiting on Bob", line)
+        self.assertNotIn("; launchable", line)
+
+    def test_hook_waiting_fr(self):
+        self.write("a.md", waiting_card("go a", "  waiting_on: 'Bob'", due="2026-10-25"))
+        env = {**self.env, "CLAUDE_PLUGIN_OPTION_LANGUAGE": "fr"}
+        _, out, _ = self.run_cli(["hook"], env=env, stdin="{}")
+        line = self.hook_text(out).split("\n")[1]
+        self.assertIn("non lançable, attend : Bob", line)
+        self.assertNotIn("; lançable", line)
+
+    def test_hook_waiting_with_future_not_before(self):
+        self.write("a.md", waiting_card("go a", "  waiting_on: 'Bob'\n  not_before: '2026-10-27 12:00'", due="2026-10-25"))
+        _, out, _ = self.run_cli(["hook"], stdin="{}")
+        self.assertIn("not launchable, not before 2026-10-27 12:00 (in 1 d 1 h); waiting on Bob",
+                      self.hook_text(out))
+
+    def test_list_waiting_with_past_not_before(self):
+        self.write("a.md", waiting_card("go a", "  waiting_on: 'Bob'\n  not_before: '2026-10-20'"))
+        _, out, _ = self.run_cli(["list"])
+        row = [ln for ln in out.split("\n") if ln.startswith("| go a")][0]
+        self.assertIn("| waiting on Bob |", row)
+
+
+class HygieneStatusCase(Base):
+    def test_stopped_kept_closed_excluded(self):
+        self.write("s.md", card("go s", status="stopped").replace("body", "x" * 30000))
+        self.write("c.md", card("go c", status="closed").replace("body", "x" * 30000))
+        _, out, _ = self.run_cli(["list"])
+        self.assertIn("Heavy files (> 20 KB): go s (30 KB)", out)
+        self.assertNotIn("go c (", out)
+
+
 class HygieneCase(Base):
     def test_heavy_and_long_lines_en(self):
         self.write("a.md", card("go a") .replace("body", "x" * 115000))
