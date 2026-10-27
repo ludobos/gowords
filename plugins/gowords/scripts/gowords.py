@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gowords command line: list [--closed] | hook | find <word> | where. Standard library only."""
+"""gowords command line: list [--closed] | next | hook | find <word> | where. Standard library only."""
 import json
 import os
 import sys
@@ -12,7 +12,7 @@ from gowords_core import (  # noqa: E402
     render_list, resolve_memory_dir, resolve_tz,
 )
 
-USAGE = "usage: gowords.py list [--closed] | hook | find <word> | where"
+USAGE = "usage: gowords.py list [--closed] | next | hook | find <word> | where"
 
 
 def _normalize(word):
@@ -71,6 +71,13 @@ def main(argv, env=None, now=None, cwd=None):
             return 0
         ws, problems = load_workstreams(mem, tz, now, lang)
         print(render_list(ws, problems, now, lang, opts["stale_days"], show_closed="--closed" in argv[1:]))
+        return 0
+    if cmd == "next":
+        if not mem:
+            print(render_hint(wanted, lang))
+            return 0
+        ws, _ = load_workstreams(mem, tz, now, lang)
+        print(render_hook(ws, now, lang))
         return 0
     if cmd == "find" and len(argv) == 2:
         if not mem:

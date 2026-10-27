@@ -1,6 +1,6 @@
 {
   "name": "gowords",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Go words: a registry of resumable workstreams with due dates and not_before times, listed by /gowords:go.",
   "author": { "name": "Ludovic Bostral" },
   "license": "MIT",
@@ -34,7 +34,7 @@
     "session_alert": {
       "type": "string",
       "title": "Session start alert",
-      "description": "on shows workstreams due within 48 hours when a session starts; off disables the alert.",
+      "description": "on shows, when a session starts, what can be launched now and what opens or falls due within 48 hours; off disables the alert.",
       "default": "on"
     },
     "peers": {

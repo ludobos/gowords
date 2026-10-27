@@ -494,9 +494,13 @@ TEXT = {
         "heavy": "Heavy files (> 20 KB): {items}",
         "long": "Long done_when (> 250 chars): {items}",
         "hint": "No memory directory found at {path}.\nCreate it by starting a workstream with: go new <word>",
-        "hook": "Go words due within 48 h (now: {now}, {zone}) — full list: /gowords:go",
-        "line": "- {word}: {due}, {delay}; launchable {launch} — {done}",
-        "line_waiting": "- {word}: {due}, {delay}; not launchable, {launch} — {done}",
+        "hook": "Go words (now: {now}, {zone}) — full list: /gowords:go",
+        "now_head": "Launch now (at most 3; neighbouring sessions: /gowords:go next):",
+        "now_none": "Launch now: nothing launchable.",
+        "now_line": "- {word}: {due} — {done}",
+        "now_due": "due {due}, {delay}", "now_far": "due {due}", "now_nodue": "no due date",
+        "later_head": "Not launchable yet, due or opening within 48 h:",
+        "line": "- {word}: {when}{launch} — {done}", "sep": "; ",
         "more": "- … {n} more: /gowords:go",
         "status": {"open": "open", "waiting": "waiting", "closed": "closed", "stopped": "stopped"},
     },
@@ -511,9 +515,13 @@ TEXT = {
         "heavy": "Fiches lourdes (> 20 Ko) : {items}",
         "long": "done_when longs (> 250 car.) : {items}",
         "hint": "Aucun dossier mémoire trouvé à {path}.\nCréez-le en lançant un chantier : go new <mot>",
-        "hook": "Mots « go » à échéance ≤ 48 h (maintenant : {now}, {zone}) — liste complète : /gowords:go",
-        "line": "- {word} : {due}, {delay} ; lançable {launch} — {done}",
-        "line_waiting": "- {word} : {due}, {delay} ; non lançable, {launch} — {done}",
+        "hook": "Mots « go » (maintenant : {now}, {zone}) — liste complète : /gowords:go",
+        "now_head": "À lancer maintenant (3 au plus ; sessions voisines : /gowords:go next) :",
+        "now_none": "À lancer maintenant : rien n'est lançable.",
+        "now_line": "- {word} : {due} — {done}",
+        "now_due": "échéance {due}, {delay}", "now_far": "échéance {due}", "now_nodue": "sans échéance",
+        "later_head": "Pas encore lançables, dus ou ouverts dans les 48 h :",
+        "line": "- {word} : {when}{launch} — {done}", "sep": " ; ",
         "more": "- … {n} de plus : /gowords:go",
         "status": {"open": "ouvert", "waiting": "en attente", "closed": "clos", "stopped": "arrêté"},
     },
@@ -601,19 +609,58 @@ def render_list(ws, problems, now, lang="en", stale_days=14, show_closed=False):
     return "\n".join(out)
 
 
+HOOK_NOW = 3
+HOOK_LATER = 5
+
+
+def is_launchable(w, now):
+    """Not closed or stopped, no waiting_on, and no not_before in the future."""
+    return (w.status not in ("closed", "stopped") and not w.waiting_on
+            and (w.not_before is None or w.not_before <= now))
+
+
+def launch_now(ws, now, lang="en"):
+    """Launchable workstreams: overdue or due within 48 h first, then by due date, then undated."""
+    active, _ = split_workstreams(ws)
+    ready = [w for w in active if is_launchable(w, now)]
+    return sorted(ready, key=lambda w: (0 if due_label(w, now, lang) else 1,) + _sort_key(w))
+
+
+def opening_soon(ws, now, lang="en"):
+    """Not launchable yet, but due within 48 h (or overdue) or opening within 48 h; sorted by opening time."""
+    active, _ = split_workstreams(ws)
+    horizon = now + timedelta(hours=48)
+    out = [w for w in active if w.status != "stopped" and not is_launchable(w, now)
+           and (due_label(w, now, lang) or (not w.waiting_on and w.not_before and w.not_before <= horizon))]
+    return sorted(out, key=lambda w: (1 if w.waiting_on else 0,
+                                      (w.not_before or now).astimezone(timezone.utc)) + _sort_key(w))
+
+
 def render_hook(ws, now, lang="en"):
-    """At most 5 lines of detail; empty when nothing is due within 48 h or overdue."""
+    """What can start now (go next criteria 0 and a), then what opens within 48 h. Empty when both are empty."""
     t = TEXT[lang]
     tz = now.tzinfo
-    active, _ = split_workstreams(ws)
-    active = [w for w in active if w.status != "stopped"]
-    soon = [w for w in active if w.due and due_label(w, now, lang)]
-    if not soon:
+    ready, later = launch_now(ws, now, lang), opening_soon(ws, now, lang)
+    if not ready and not later:
         return ""
     out = [t["hook"].format(now=now.strftime("%Y-%m-%d %H:%M"), zone=tz_name(tz, now))]
-    for w in soon[:5]:
-        out.append(t["line_waiting" if w.waiting_on else "line"].format(word=w.word, due=_fmt_due(w, tz), delay=due_label(w, now, lang),
-                                    launch=launch_label(w, now, lang), done=_cut_done(w.done_when)))
-    if len(soon) > 5:
-        out.append(t["more"].format(n=len(soon) - 5))
+    if ready:
+        out.append(t["now_head"])
+        for w in ready[:HOOK_NOW]:
+            delay = due_label(w, now, lang)
+            due = (t["now_due"].format(due=_fmt_due(w, tz), delay=delay) if delay
+                   else t["now_far"].format(due=_fmt_due(w, tz)) if w.due else t["now_nodue"])
+            out.append(t["now_line"].format(word=w.word, due=due, done=_cut_done(w.done_when)))
+        if len(ready) > HOOK_NOW:
+            out.append(t["more"].format(n=len(ready) - HOOK_NOW))
+    else:
+        out.append(t["now_none"])
+    if later:
+        out.append(t["later_head"])
+        for w in later[:HOOK_LATER]:
+            when = ", ".join(x for x in (_fmt_due(w, tz), due_label(w, now, lang)) if x)
+            out.append(t["line"].format(word=w.word, when=when + t["sep"] if when else "",
+                                        launch=launch_label(w, now, lang), done=_cut_done(w.done_when)))
+        if len(later) > HOOK_LATER:
+            out.append(t["more"].format(n=len(later) - HOOK_LATER))
     return "\n".join(out)

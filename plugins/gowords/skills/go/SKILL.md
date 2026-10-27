@@ -18,7 +18,7 @@ script passes them inline. Use exactly this prefix, called RUN below:
 CLAUDE_PLUGIN_OPTION_TIMEZONE='${user_config.timezone}' CLAUDE_PLUGIN_OPTION_LANGUAGE='${user_config.language}' CLAUDE_PLUGIN_OPTION_STALE_DAYS='${user_config.stale_days}' CLAUDE_PLUGIN_OPTION_MEMORY_DIR='${user_config.memory_dir}' CLAUDE_PLUGIN_OPTION_SESSION_ALERT='${user_config.session_alert}' python3 "${CLAUDE_PLUGIN_ROOT}"/scripts/gowords.py
 ```
 
-Commands: `RUN list`, `RUN list --closed`, `RUN find <word>`, `RUN where`.
+Commands: `RUN list`, `RUN list --closed`, `RUN next`, `RUN find <word>`, `RUN where`.
 
 Peer step option: `peers` = `${user_config.peers}`. It takes `ask`, `on` or `off`. If it shows as
 an unresolved placeholder, is empty or is any other value, treat it as `ask`. The user can also say
@@ -58,6 +58,10 @@ an unresolved placeholder, is empty or is any other value, treat it as `ask`. Th
 
 After the tables, recommend the **3 tasks to launch now** from the active go words. This is what can
 start now, not what is most important.
+
+Run `RUN next` first. It prints the same text as the session-start alert: the launchable words
+sorted by criteria (0) and (a), then the words that open or fall due within 48 h. Start from that
+order; criteria (b) and (c) below are the only ones the script cannot apply.
 
 Write the criteria BEFORE the sorting table:
 

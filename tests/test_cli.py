@@ -116,11 +116,53 @@ class CliCase(Base):
         self.assertIn("go new", out.getvalue())
         self.assertIn(os.path.join(self.tmp, ".claude", "projects"), out.getvalue())
 
-    def test_hook_silent_without_deadlines(self):
-        self.write("a.md", card("go a", due="2026-12-01"))
-        self.write("b.md", card("go b"))
+    def test_hook_silent_when_nothing_launchable_or_soon(self):
+        self.write("a.md", waiting_card("go a", "  waiting_on: 'Bob'", due="2026-12-01"))
+        self.write("b.md", waiting_card("go b", "  not_before: '2026-11-15'"))
         code, out, _ = self.run_cli(["hook"], stdin="{}")
         self.assertEqual((code, out), (0, ""))
+
+    def test_hook_shows_launchable_without_deadline(self):
+        self.write("a.md", card("go a", due="2026-12-01"))
+        self.write("b.md", card("go b"))
+        lines = self.hook_text(self.run_cli(["hook"], stdin="{}")[1]).split("\n")
+        self.assertEqual(lines[1], "Launch now (at most 3; neighbouring sessions: /gowords:go next):")
+        self.assertEqual(lines[2], "- go a: due 2026-12-01 — it ships")
+        self.assertEqual(lines[3], "- go b: no due date — it ships")
+        self.assertEqual(len(lines), 4)
+
+    def test_hook_launchable_due_soon_before_others(self):
+        self.write("a.md", card("go a"))
+        self.write("b.md", card("go b", due="2026-12-01"))
+        self.write("c.md", card("go c", due="2026-10-27"))
+        self.write("d.md", waiting_card("go d", "  not_before: '2026-10-27 09:00'", due="2026-10-26 18:00"))
+        lines = self.hook_text(self.run_cli(["hook"], stdin="{}")[1]).split("\n")
+        self.assertEqual([ln.split(":")[0] for ln in lines[2:5]], ["- go c", "- go b", "- go a"])
+        self.assertEqual(lines[5], "Not launchable yet, due or opening within 48 h:")
+        self.assertTrue(lines[6].startswith("- go d: 2026-10-26 18:00, in 7 h 01; not before 2026-10-27 09:00"))
+
+    def test_hook_not_before_opening_within_48h_without_due(self):
+        self.write("a.md", waiting_card("go a", "  not_before: '2026-10-27 12:00'"))
+        self.write("b.md", waiting_card("go b", "  not_before: '2026-10-30'"))
+        lines = self.hook_text(self.run_cli(["hook"], stdin="{}")[1]).split("\n")
+        self.assertEqual(lines[1], "Launch now: nothing launchable.")
+        self.assertTrue(lines[3].startswith("- go a: not before 2026-10-27 12:00 (in 1 d 1 h)"))
+        self.assertEqual(len(lines), 4)
+
+    def test_hook_launchable_block_fr(self):
+        self.write("a.md", card("go a"))
+        self.write("b.md", card("go b", due="2026-10-27"))
+        env = {**self.env, "CLAUDE_PLUGIN_OPTION_LANGUAGE": "fr"}
+        lines = self.hook_text(self.run_cli(["hook"], env=env, stdin="{}")[1]).split("\n")
+        self.assertEqual(lines[1], "À lancer maintenant (3 au plus ; sessions voisines : /gowords:go next) :")
+        self.assertEqual(lines[2], "- go b : échéance 2026-10-27, dans 1 j 13 h (fin de journée) — it ships")
+        self.assertEqual(lines[3], "- go a : sans échéance — it ships")
+
+    def test_next_command_prints_hook_text(self):
+        self.write("a.md", card("go a"))
+        code, out, _ = self.run_cli(["next"])
+        self.assertEqual(code, 0)
+        self.assertIn("- go a: no due date — it ships", out)
 
     def test_hook_silent_without_memory_dir(self):
         out = io.StringIO()
@@ -128,14 +170,14 @@ class CliCase(Base):
             code = gowords.main(["hook"], {"HOME": self.tmp}, now=NOW, cwd=self.tmp)
         self.assertEqual((code, out.getvalue()), (0, ""))
 
-    def test_hook_max_five_lines(self):
+    def test_hook_now_block_caps_at_three(self):
         for i in range(7):
             self.write(f"f{i}.md", card(f"go w{i}", due="2026-10-25"))
         code, out, _ = self.run_cli(["hook"], stdin=json.dumps({"cwd": self.tmp}))
         lines = self.hook_text(out).split("\n")
-        self.assertEqual(len(lines), 7)  # header + 5 + more
-        self.assertIn("… 2 more", lines[-1])
-        self.assertIn("OVERDUE", lines[1])
+        self.assertEqual(len(lines), 6)  # header + block head + 3 + more
+        self.assertIn("… 4 more", lines[-1])
+        self.assertIn("OVERDUE", lines[2])
 
     def test_hook_bad_stdin_does_not_crash(self):
         self.write("a.md", card("go a", due="2026-10-26 12:00"))
@@ -270,7 +312,7 @@ class HookCutCase(Base):
     def test_long_done_when_is_cut(self):
         self.write("a.md", card("go a", due="2026-10-25", done="'" + "word " * 60 + "'"))
         _, out, _ = self.run_cli(["hook"], stdin="{}")
-        line = self.hook_text(out).split("\n")[1]
+        line = self.hook_text(out).split("\n")[2]
         crit = line.split(" — ", 1)[1]
         self.assertLessEqual(len(crit), 121)
         self.assertTrue(crit.endswith("…"))
@@ -279,13 +321,13 @@ class HookCutCase(Base):
     def test_cut_without_space_after_80_is_hard(self):
         self.write("a.md", card("go a", due="2026-10-25", done="'" + "x" * 300 + "'"))
         _, out, _ = self.run_cli(["hook"], stdin="{}")
-        crit = self.hook_text(out).split("\n")[1].split(" — ", 1)[1]
+        crit = self.hook_text(out).split("\n")[2].split(" — ", 1)[1]
         self.assertEqual(crit, "x" * 120 + "…")
 
     def test_short_done_when_unchanged(self):
         self.write("a.md", card("go a", due="2026-10-25", done="'it ships'"))
         _, out, _ = self.run_cli(["hook"], stdin="{}")
-        self.assertTrue(self.hook_text(out).split("\n")[1].endswith("— it ships"))
+        self.assertTrue(self.hook_text(out).split("\n")[2].endswith("— it ships"))
 
 
 def waiting_card(word, extra, status="open", due=None):
@@ -296,22 +338,23 @@ class WaitingHookCase(Base):
     def test_hook_waiting_en(self):
         self.write("a.md", waiting_card("go a", "  waiting_on: 'Bob'", due="2026-10-25"))
         _, out, _ = self.run_cli(["hook"], stdin="{}")
-        line = self.hook_text(out).split("\n")[1]
-        self.assertIn("not launchable, waiting on Bob", line)
-        self.assertNotIn("; launchable", line)
+        lines = self.hook_text(out).split("\n")
+        self.assertEqual(lines[1], "Launch now: nothing launchable.")
+        self.assertIn("; waiting on Bob", lines[3])
 
     def test_hook_waiting_fr(self):
         self.write("a.md", waiting_card("go a", "  waiting_on: 'Bob'", due="2026-10-25"))
         env = {**self.env, "CLAUDE_PLUGIN_OPTION_LANGUAGE": "fr"}
         _, out, _ = self.run_cli(["hook"], env=env, stdin="{}")
-        line = self.hook_text(out).split("\n")[1]
-        self.assertIn("non lançable, attend : Bob", line)
-        self.assertNotIn("; lançable", line)
+        lines = self.hook_text(out).split("\n")
+        self.assertEqual(lines[1], "À lancer maintenant : rien n'est lançable.")
+        self.assertEqual(lines[2], "Pas encore lançables, dus ou ouverts dans les 48 h :")
+        self.assertIn(" ; attend : Bob", lines[3])
 
     def test_hook_waiting_with_future_not_before(self):
         self.write("a.md", waiting_card("go a", "  waiting_on: 'Bob'\n  not_before: '2026-10-27 12:00'", due="2026-10-25"))
         _, out, _ = self.run_cli(["hook"], stdin="{}")
-        self.assertIn("not launchable, not before 2026-10-27 12:00 (in 1 d 1 h); waiting on Bob",
+        self.assertIn("; not before 2026-10-27 12:00 (in 1 d 1 h); waiting on Bob",
                       self.hook_text(out))
 
     def test_list_waiting_with_past_not_before(self):
