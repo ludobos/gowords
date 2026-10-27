@@ -38,12 +38,14 @@ an unresolved placeholder, is empty or is any other value, treat it as `ask`. Th
    on, which files or resources are you changing, what are you leaving free?" Read the replies, then
    mark in the list the words already taken by a session. A session that does not answer is marked
    "no answer", never counted as free.
-2. Run `RUN list`. Its closed table is omitted: the output ends the active table with a line that
-   counts the closed workstreams. Run `RUN list --closed` only when the user asks for the closed ones.
+2. Run `RUN list`. It prints the active table, then the recurring table, then a line that counts the
+   closed workstreams (stopped ones included). Run `RUN list --closed` only when the user asks for the
+   closed ones.
 3. Render its tables as they are, without rewriting them into prose, and add a "taken by" column
    from step 1. The source of truth is the frontmatter of each file: `metadata.go_word`, `aliases`,
-   `status` (`open`, `waiting`, `closed`, `stopped`; French `ouvert`, `en attente`, `clos`,
-   `arrêté`), `next_due`, `not_before`, `waiting_on` and `done_when`.
+   `status` (`open`, `waiting`, `recurring`, `closed`, `stopped`; French `ouvert`, `en attente`,
+   `récurrent`, `clos`, `arrêté`), `next_due`, `not_before`, `waiting_on`, `cadence`, `next_run`,
+   `follow_up` and `done_when`.
 4. Everything is relative to the current time in the configured time zone. The script prints "Now"
    and, for a due date that is overdue or within 48 hours, the delay from that instant; beyond 48
    hours the delay column is empty, so compute it yourself from the printed date. In the rendered text, never give a bare UTC
@@ -65,10 +67,13 @@ order; criteria (b) and (c) below are the only ones the script cannot apply.
 
 Write the criteria BEFORE the sorting table:
 
-- (0) launchable now: no `not_before` in the future, no `waiting_on`, and the status is not
-  `stopped` or `closed`. A workstream with `waiting_on` is never launchable now, whatever its
-  `not_before`: it goes in the "later" line with what it waits on. Stopped workstreams are never candidates, although `list` still shows them in the active table. A word whose `not_before` is in the future is
-  not among the 3; it goes in a "later" line with its time in the configured zone and its delay.
+- (0) launchable now: no `not_before` in the future, no `waiting_on`, and the status is `open` or
+  `waiting`; or the status is `recurring` and `next_run` is reached. A workstream with `waiting_on`
+  is never launchable now, whatever its `not_before`: it goes in the "later" line with what it waits
+  on. Closed and stopped workstreams are never candidates. A recurring word before its `next_run`,
+  or with the cadence "on demand", is not a candidate and is not in the "later" line. A word whose
+  `not_before` is in the future is not among the 3; it goes in a "later" line with its time in the
+  configured zone and its delay.
 - (a) overdue or due within 48 h of now comes first; among due dates on the same day, the action
   that can be done earliest.
 - (b) not taken by a neighbouring session (step 1 of "Listing").
@@ -97,7 +102,9 @@ A paid or irreversible action is recommended, never launched.
 
 ## `go new <word>`
 
-1. Ask for the `done_when` criterion first. Do not write anything before the user has answered.
+1. Ask for the `done_when` criterion first, and whether the word closes once or recurs. Do not write
+   anything before the user has answered. A request that mixes a delivery and its upkeep ("ship X,
+   then re-check it every month") becomes two words: one that closes, one recurring.
 2. Find the target directory with `RUN where`. If it prints nothing or fails, ask the user where the
    workstream files live; do not guess. (The `memory_dir` option or the automatic memory directory
    of the project must exist; the directory is created only if the user asks for it.)
@@ -113,7 +120,7 @@ metadata:
   type: project
   go_word: 'go <word>'
   aliases: ['go <other>']        # optional
-  status: 'open'                  # open | waiting | closed | stopped
+  status: 'open'                  # open | waiting | recurring | closed | stopped
   next_due: 'YYYY-MM-DD'          # or 'YYYY-MM-DD HH:MM', local time; optional
   not_before: 'YYYY-MM-DD HH:MM'  # optional; a bare date means 00:00
   waiting_on: '<person or event>' # optional; person or event awaited
@@ -121,11 +128,28 @@ metadata:
 ---
 ```
 
+A recurring word replaces `next_due` with two fields, and its `done_when` describes one run:
+
+```yaml
+  status: 'recurring'
+  cadence: 'monthly, 2nd Wednesday 09:00'  # or '30 days', or 'on demand'
+  next_run: 'YYYY-MM-DD HH:MM'             # omitted when the cadence is 'on demand'
+  done_when: '<what one run must produce>'
+```
+
 ## Rules for writing a workstream file
 
 - One word is one workstream. A merge keeps the old word in `aliases`.
 - `done_when` is written at creation. "Not written" is a visible debt, not a valid value.
-- Close with `status: closed`; never delete the file.
+- Three states. **Closed**: the `done_when` is met, or the only thing left is an event already armed
+  that will happen without anyone acting (scheduled post, timer, calendar reminder); write that event
+  in `follow_up`, not as a remainder. **Open or waiting**: an action remains, for the session, the
+  user or a named third party. **Recurring**: the word never closes; it has a `cadence` and, unless
+  on demand, a `next_run`.
+- Close with `status: closed`; never delete the file. `stopped` is filed with the closed words; set it
+  back to `open` to resume.
+- After a run of a recurring word, move `next_run` to the next date given by the cadence. The script
+  does not compute it.
 - Set `not_before` as soon as the next action waits for a time or a day (scheduled run, scheduled
   mail, measurement window, dated reminder, "tonight"), in the same format as `next_due`. A bare date
   means 00:00. No waiting means no field.

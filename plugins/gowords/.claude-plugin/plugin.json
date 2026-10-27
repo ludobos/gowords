@@ -1,6 +1,6 @@
 {
   "name": "gowords",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Go words: a registry of resumable workstreams with due dates and not_before times, listed by /gowords:go.",
   "author": { "name": "Ludovic Bostral" },
   "license": "MIT",

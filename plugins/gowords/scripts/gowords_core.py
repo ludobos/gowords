@@ -188,7 +188,11 @@ STATUS_MAP = {
     "waiting": "waiting", "en attente": "waiting",
     "closed": "closed", "clos": "closed",
     "stopped": "stopped", "arrêté": "stopped",
+    "recurring": "recurring", "récurrent": "recurring", "recurrent": "recurring",
 }
+
+# A recurring workstream with one of these cadences has no next run to wait for.
+ON_DEMAND = {"on demand", "sur demande"}
 
 LABELS = {
     "en": {
@@ -220,6 +224,10 @@ class Workstream:
     not_before_timed: bool = False
     waiting_on: str = ""
     size: int = 0
+    cadence: str = ""
+    next_run: object = None
+    next_run_timed: bool = False
+    follow_up: str = ""
 
 
 def parse_due(value, tz, day_time=time(23, 59)):
@@ -294,6 +302,9 @@ PROBLEMS = {
         "date": "{key} is not a date: {raw!r}",
         "done_when": "done_when is missing",
         "dup": "go_word {word!r} is used by several open workstreams ({files})",
+        "no_run": "recurring without next_run (cadence {cadence!r} is not on demand)",
+        "no_cadence": "recurring without cadence",
+        "run_due": "recurring with next_due: use next_run only",
     },
     "fr": {
         "read": "fichier illisible ({reason})",
@@ -302,6 +313,9 @@ PROBLEMS = {
         "date": "{key} : date illisible {raw!r}",
         "done_when": "done_when absent",
         "dup": "mot {word!r} porté par plusieurs fiches ouvertes ({files})",
+        "no_run": "récurrent sans next_run (cadence {cadence!r}, pas sur demande)",
+        "no_cadence": "récurrent sans cadence",
+        "run_due": "récurrent avec next_due : n'utiliser que next_run",
     },
 }
 
@@ -344,7 +358,7 @@ def load_workstreams(memory_dir, tz, now, lang="en"):
             status = raw_status.lower() or "?"
 
         dates = {}
-        for key, day_time in (("next_due", time(23, 59)), ("not_before", time(0, 0))):
+        for key, day_time in (("next_due", time(23, 59)), ("not_before", time(0, 0)), ("next_run", time(0, 0))):
             dates[key] = (None, False)
             if meta.get(key):
                 try:
@@ -355,6 +369,15 @@ def load_workstreams(memory_dir, tz, now, lang="en"):
         done_when = str(meta.get("done_when", "")).strip()
         if not done_when:
             problems.append(f"{name}: " + pb["done_when"])
+
+        cadence = str(meta.get("cadence", "")).strip()
+        if status == "recurring":
+            if not cadence:
+                problems.append(f"{name}: " + pb["no_cadence"])
+            elif not meta.get("next_run") and cadence.casefold() not in ON_DEMAND:
+                problems.append(f"{name}: " + pb["no_run"].format(cadence=cadence))
+            if meta.get("next_due"):
+                problems.append(f"{name}: " + pb["run_due"])
 
         mtime = datetime.fromtimestamp(os.path.getmtime(path), tz).date()
         workstreams.append(Workstream(
@@ -370,6 +393,10 @@ def load_workstreams(memory_dir, tz, now, lang="en"):
             not_before_timed=dates["not_before"][1],
             waiting_on=str(meta.get("waiting_on", "")).strip(),
             size=os.path.getsize(path),
+            cadence=cadence,
+            next_run=dates["next_run"][0],
+            next_run_timed=dates["next_run"][1],
+            follow_up=str(meta.get("follow_up", "")).strip(),
         ))
 
     seen = {}
@@ -484,10 +511,13 @@ def tz_name(tz, now):
 
 TEXT = {
     "en": {
-        "header": "Now: {now}, {zone} — {a} active, {c} closed",
+        "header": "Now: {now}, {zone} — {a} active, {r} recurring, {c} closed",
         "active": "## Active, sorted by due date ({zone}; a bare date means due by end of day)",
         "cols": "| Word | Status | Launchable | Due | Delay from now | Done when |",
-        "closed": "## Closed", "closed_cols": "| Word | Done when |",
+        "recurring": "## Recurring (a run is launchable from its next run)",
+        "rec_cols": "| Word | Cadence | Next run | Delay from now | Done when (per run) |",
+        "closed": "## Closed", "closed_cols": "| Word | Done when | Follow-up |",
+        "stopped": " (stopped)", "now_run": "run due {run}, {delay}",
         "alias": " (alias: {a})", "stale": "no due date, card unchanged for {n} {u}",
         "problems": "Problems: ",
         "closed_hidden": "{n} closed — list --closed to show them",
@@ -505,10 +535,13 @@ TEXT = {
         "status": {"open": "open", "waiting": "waiting", "closed": "closed", "stopped": "stopped"},
     },
     "fr": {
-        "header": "Maintenant : {now}, {zone} — {a} actifs, {c} clos",
+        "header": "Maintenant : {now}, {zone} — {a} actifs, {r} récurrents, {c} clos",
         "active": "## Actifs, triés par échéance ({zone} ; une date seule = due dans la journée)",
         "cols": "| Mot | Statut | Lançable | Échéance | Délai depuis maintenant | Critère de fin |",
-        "closed": "## Clos", "closed_cols": "| Mot | Critère de fin |",
+        "recurring": "## Récurrents (un run est lançable dès son prochain run)",
+        "rec_cols": "| Mot | Cadence | Prochain run | Délai depuis maintenant | Critère par run |",
+        "closed": "## Clos", "closed_cols": "| Mot | Critère de fin | Suivi |",
+        "stopped": " (arrêté)", "now_run": "run prévu {run}, {delay}",
         "alias": " (alias : {a})", "stale": "sans échéance, fiche inchangée depuis {n} {u}",
         "problems": "Problèmes : ",
         "closed_hidden": "{n} clos — list --closed pour les afficher",
@@ -541,10 +574,38 @@ def _fmt_due(w, tz):
     return d.strftime("%Y-%m-%d %H:%M") if w.due_timed else d.date().isoformat()
 
 
+def _fmt_run(w, tz):
+    if w.next_run is None:
+        return ""
+    d = w.next_run.astimezone(tz)
+    return d.strftime("%Y-%m-%d %H:%M") if w.next_run_timed else d.date().isoformat()
+
+
+def run_label(w, now, lang="en"):
+    """Delay to the next run: overdue, or within 48 h; empty otherwise."""
+    if w.next_run is None:
+        return ""
+    labels = LABELS[lang]
+    td = _real_delta(w.next_run, now)
+    if td.total_seconds() < 0:
+        return labels["overdue"].format(delta=format_delta(td, lang))
+    if td <= timedelta(hours=48):
+        return labels["due"].format(delta=format_delta(td, lang))
+    return ""
+
+
+def run_reached(w, now):
+    """A recurring workstream whose next run has come."""
+    return w.status == "recurring" and w.next_run is not None and w.next_run <= now
+
+
 def split_workstreams(ws):
-    active = sorted((w for w in ws if w.status != "closed"), key=_sort_key)
-    closed = sorted((w for w in ws if w.status == "closed"), key=lambda w: w.word.casefold())
-    return active, closed
+    """(active, recurring, closed). Stopped workstreams are filed with the closed ones."""
+    active = sorted((w for w in ws if w.status not in ("closed", "stopped", "recurring")), key=_sort_key)
+    recurring = sorted((w for w in ws if w.status == "recurring"),
+                       key=lambda w: (w.next_run.astimezone(timezone.utc) if w.next_run else _FAR, w.word.casefold()))
+    closed = sorted((w for w in ws if w.status in ("closed", "stopped")), key=lambda w: w.word.casefold())
+    return active, recurring, closed
 
 
 def render_hint(path, lang="en"):
@@ -569,7 +630,7 @@ def _cut_done(text):
 
 
 def hygiene_lines(active, lang="en"):
-    """Up to two lines about heavy cards and long done_when, for non-closed workstreams."""
+    """Up to two lines about heavy cards and long done_when, for active workstreams."""
     t = TEXT[lang]
     unit = "KB" if lang == "en" else "Ko"
     heavy = sorted((w for w in active if w.size > HEAVY_BYTES), key=lambda w: (-w.size, w.word.casefold()))
@@ -586,8 +647,9 @@ def render_list(ws, problems, now, lang="en", stale_days=14, show_closed=False):
     t = TEXT[lang]
     tz = now.tzinfo
     zone = tz_name(tz, now)
-    active, closed = split_workstreams(ws)
-    out = [t["header"].format(now=now.strftime("%Y-%m-%d %H:%M"), zone=zone, a=len(active), c=len(closed)), "",
+    active, recurring, closed = split_workstreams(ws)
+    out = [t["header"].format(now=now.strftime("%Y-%m-%d %H:%M"), zone=zone, a=len(active), r=len(recurring),
+                              c=len(closed)), "",
            t["active"].format(zone=zone), "", t["cols"], "|---|---|---|---|---|---|"]
     for w in active:
         alias = t["alias"].format(a=", ".join(w.aliases)) if w.aliases else ""
@@ -596,9 +658,15 @@ def render_list(ws, problems, now, lang="en", stale_days=14, show_closed=False):
             flag = t["stale"].format(n=w.age_days, u=LABELS[lang]["d"])
         status = t["status"].get(w.status, w.status)
         out.append(f"| {w.word}{alias} | {status} | {launch_label(w, now, lang)} | {_fmt_due(w, tz) or '-'} | {flag} | {w.done_when} |")
+    if recurring:
+        out += ["", t["recurring"], "", t["rec_cols"], "|---|---|---|---|---|"]
+        for w in recurring:
+            alias = t["alias"].format(a=", ".join(w.aliases)) if w.aliases else ""
+            out.append(f"| {w.word}{alias} | {w.cadence} | {_fmt_run(w, tz) or '-'} | {run_label(w, now, lang)} | {w.done_when} |")
     if show_closed:
-        out += ["", t["closed"], "", t["closed_cols"], "|---|---|"]
-        out += [f"| {w.word} | {w.done_when} |" for w in closed]
+        out += ["", t["closed"], "", t["closed_cols"], "|---|---|---|"]
+        out += [f"| {w.word}{t['stopped'] if w.status == 'stopped' else ''} | {w.done_when} | {w.follow_up} |"
+                for w in closed]
     elif closed:
         out += ["", t["closed_hidden"].format(n=len(closed))]
     if problems:
@@ -620,17 +688,19 @@ def is_launchable(w, now):
 
 
 def launch_now(ws, now, lang="en"):
-    """Launchable workstreams: overdue or due within 48 h first, then by due date, then undated."""
-    active, _ = split_workstreams(ws)
-    ready = [w for w in active if is_launchable(w, now)]
-    return sorted(ready, key=lambda w: (0 if due_label(w, now, lang) else 1,) + _sort_key(w))
+    """Recurring words whose run has come, by run time; then launchable words, overdue or due within 48 h first."""
+    active, recurring, _ = split_workstreams(ws)
+    runs = [w for w in recurring if run_reached(w, now)]
+    ready = sorted((w for w in active if is_launchable(w, now)),
+                   key=lambda w: (0 if due_label(w, now, lang) else 1,) + _sort_key(w))
+    return runs + ready
 
 
 def opening_soon(ws, now, lang="en"):
     """Not launchable yet, but due within 48 h (or overdue) or opening within 48 h; sorted by opening time."""
-    active, _ = split_workstreams(ws)
+    active, _, _ = split_workstreams(ws)
     horizon = now + timedelta(hours=48)
-    out = [w for w in active if w.status != "stopped" and not is_launchable(w, now)
+    out = [w for w in active if not is_launchable(w, now)
            and (due_label(w, now, lang) or (not w.waiting_on and w.not_before and w.not_before <= horizon))]
     return sorted(out, key=lambda w: (1 if w.waiting_on else 0,
                                       (w.not_before or now).astimezone(timezone.utc)) + _sort_key(w))
@@ -648,7 +718,8 @@ def render_hook(ws, now, lang="en"):
         out.append(t["now_head"])
         for w in ready[:HOOK_NOW]:
             delay = due_label(w, now, lang)
-            due = (t["now_due"].format(due=_fmt_due(w, tz), delay=delay) if delay
+            due = (t["now_run"].format(run=_fmt_run(w, tz), delay=run_label(w, now, lang)) if w.status == "recurring"
+                   else t["now_due"].format(due=_fmt_due(w, tz), delay=delay) if delay
                    else t["now_far"].format(due=_fmt_due(w, tz)) if w.due else t["now_nodue"])
             out.append(t["now_line"].format(word=w.word, due=due, done=_cut_done(w.done_when)))
         if len(ready) > HOOK_NOW:

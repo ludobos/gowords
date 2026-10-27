@@ -201,10 +201,11 @@ class CliCase(Base):
         code, out, _ = self.run_cli(["hook"], stdin="{}")
         self.assertEqual((code, out), (0, ""))
 
-    def test_list_keeps_stopped_in_active_table(self):
+    def test_list_files_stopped_with_closed(self):
         self.write("a.md", card("go a", status="stopped", due="2026-10-20"))
         code, out, _ = self.run_cli(["list"])
-        self.assertIn("| go a | stopped |", out)
+        self.assertNotIn("| go a |", out)
+        self.assertIn("1 closed — list --closed", out)
 
     def test_stale_days_float_string(self):
         self.assertEqual(read_options({"CLAUDE_PLUGIN_OPTION_STALE_DAYS": "14.0"})["stale_days"], 14)
@@ -251,7 +252,7 @@ class CliCase(Base):
         code, out, _ = self.run_cli(["list", "--closed"])
         self.assertEqual(code, 0)
         lines = out.split("\n")
-        self.assertEqual(lines[0], "Now: 2026-10-26 10:59, Europe/Paris — 3 active, 1 closed")
+        self.assertEqual(lines[0], "Now: 2026-10-26 10:59, Europe/Paris — 3 active, 0 recurring, 1 closed")
         self.assertIn("| Word | Status | Launchable | Due | Delay from now | Done when |", out)
         self.assertLess(out.index("go soon"), out.index("go late"))
         self.assertLess(out.index("go late"), out.index("go none"))
@@ -265,7 +266,7 @@ class CliCase(Base):
         self.write("bad.md", "---\nmetadata:\n  go_word: 'go x'\n  status: weird\n  done_when: 'x'\n---\n")
         env = {**self.env, "CLAUDE_PLUGIN_OPTION_LANGUAGE": "fr"}
         code, out, _ = self.run_cli(["list"], env=env)
-        self.assertIn("Maintenant : 2026-10-26 10:59, Europe/Paris — 2 actifs, 0 clos", out)
+        self.assertIn("Maintenant : 2026-10-26 10:59, Europe/Paris — 2 actifs, 0 récurrents, 0 clos", out)
         self.assertIn("DÉPASSÉE", out)
         self.assertIn("Problèmes :", out)
 
@@ -365,11 +366,13 @@ class WaitingHookCase(Base):
 
 
 class HygieneStatusCase(Base):
-    def test_stopped_kept_closed_excluded(self):
+    def test_stopped_and_closed_excluded(self):
+        self.write("o.md", card("go o").replace("body", "x" * 30000))
         self.write("s.md", card("go s", status="stopped").replace("body", "x" * 30000))
         self.write("c.md", card("go c", status="closed").replace("body", "x" * 30000))
         _, out, _ = self.run_cli(["list"])
-        self.assertIn("Heavy files (> 20 KB): go s (30 KB)", out)
+        self.assertIn("Heavy files (> 20 KB): go o (30 KB)", out)
+        self.assertNotIn("go s (", out)
         self.assertNotIn("go c (", out)
 
 

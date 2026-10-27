@@ -42,7 +42,7 @@ metadata:
   type: project
   go_word: 'go <word>'
   aliases: ['go <other>']        # optional
-  status: 'open'                  # open | waiting | closed | stopped
+  status: 'open'                  # open | waiting | recurring | closed | stopped
   next_due: 'YYYY-MM-DD'          # or 'YYYY-MM-DD HH:MM', local time; optional
   not_before: 'YYYY-MM-DD HH:MM'  # optional; a bare date means 00:00
   waiting_on: '<person or event>' # optional; person or event awaited
@@ -52,11 +52,13 @@ metadata:
 One paragraph that states the goal and the next action.
 ```
 
-The script also accepts the French statuses `ouvert`, `en attente`, `clos` and `arrêté`, whatever the output language. It reads a small subset of YAML: bare or quoted scalars on one line, and inline lists `[...]`. A file it cannot read is reported as a problem in the listing instead of being skipped. It also reports an unreadable date, a word claimed by two files, a missing `done_when`, and an open workstream with no due date whose file has not changed for `stale_days` days (14 by default). Two more lines flag cards that have grown: files over 20 KB and `done_when` over 250 characters, for workstreams that are not closed.
+A word that never closes, such as a monthly clean-up, uses `status: 'recurring'` with a `cadence` and a `next_run` instead of `next_due`; its `done_when` describes one run. It is listed in a table of its own and becomes launchable when `next_run` is reached, not before. A cadence of `on demand` (or `sur demande`) needs no `next_run` and is never proposed by `go next`. A closed word may carry `follow_up`: an event already armed, such as a scheduled post, that needs no action.
+
+The script also accepts the French statuses `ouvert`, `en attente`, `récurrent`, `clos` and `arrêté`, whatever the output language. It reads a small subset of YAML: bare or quoted scalars on one line, and inline lists `[...]`. A file it cannot read is reported as a problem in the listing instead of being skipped. It also reports an unreadable date, a word claimed by two files, a missing `done_when`, and an open workstream with no due date whose file has not changed for `stale_days` days (14 by default). Two more lines flag cards that have grown: files over 20 KB and `done_when` over 250 characters, for workstreams that are not closed.
 
 `waiting_on` names the person or event a workstream waits for, when no date is known. A workstream with `waiting_on` is never launchable, whatever `not_before` says, and the listing shows what it waits on. `list` hides closed workstreams and prints their count; `list --closed` prints the closed table. The session-start alert cuts each `done_when` to 120 characters.
 
-A workstream is closed by setting `status: 'closed'`. Its file stays.
+A workstream is closed by setting `status: 'closed'`. Its file stays. A stopped workstream is counted and listed with the closed ones.
 
 ## Examples
 
@@ -105,6 +107,16 @@ Claude Code asks for these values when the plugin is enabled and saves them unde
 - Windows paths are not handled by the encoding of the project path into the memory directory name. Set `memory_dir` to point at the directory directly.
 - Peer sessions in other projects are listed by `ListAgents` too. The default `ask` shows how many would be messaged and sends nothing without your yes.
 - `gowords.py hook` reads stdin. Run by hand in a terminal, it waits for input.
+
+## Release notes
+
+### 0.4.0
+
+- New status `recurring` (`récurrent`), with the fields `cadence` and `next_run`. Recurring words have their own table in `list`, and the header counts active, recurring and closed words. A recurring word enters `go next` and the session-start alert only once `next_run` is reached; with the cadence `on demand` it never does.
+- Problem lines for a recurring word without `cadence`, without `next_run` (unless on demand), or with a `next_due`.
+- `follow_up` on a closed word, shown in the closed table: an armed event that needs no action.
+- `stopped` words are filed with the closed ones: they leave the active table and the hygiene lines.
+- Existing statuses and fields are read as before.
 
 ## About the author
 
